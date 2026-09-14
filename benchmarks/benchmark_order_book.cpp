@@ -5,16 +5,14 @@
 
 static void BM_AddOrder(benchmark::State& state) {
     lob::OrderBook book;
-    std::random_device rd;
-    std::mt19937 gen(rd());
+    std::mt19937 gen(42);
     std::uniform_int_distribution<lob::Price> price_dist(90, 110);
     std::uniform_int_distribution<lob::Quantity> qty_dist(1, 100);
     
     lob::OrderId id = 1;
     for (auto _ : state) {
         benchmark::DoNotOptimize(
-            book.add_order(id++, lob::Side::Buy, lob::OrderType::Limit, 
-                          price_dist(gen), qty_dist(gen))
+            book.add_order(id++, lob::Side::Buy, price_dist(gen), qty_dist(gen))
         );
     }
     state.SetItemsProcessed(state.iterations());
@@ -23,16 +21,14 @@ BENCHMARK(BM_AddOrder)->Unit(benchmark::kMicrosecond);
 
 static void BM_AddOrder_WithManyLevels(benchmark::State& state) {
     lob::OrderBook book;
-    std::random_device rd;
-    std::mt19937 gen(rd());
+    std::mt19937 gen(42);
     std::uniform_int_distribution<lob::Price> price_dist(90, 90 + state.range(0));
     std::uniform_int_distribution<lob::Quantity> qty_dist(1, 100);
     
     lob::OrderId id = 1;
     for (auto _ : state) {
         benchmark::DoNotOptimize(
-            book.add_order(id++, lob::Side::Buy, lob::OrderType::Limit, 
-                          price_dist(gen), qty_dist(gen))
+            book.add_order(id++, lob::Side::Buy, price_dist(gen), qty_dist(gen))
         );
     }
     state.SetItemsProcessed(state.iterations());
@@ -47,8 +43,8 @@ static void BM_BestBidAsk(benchmark::State& state) {
     // Pre-populate with orders
     const std::size_t num_orders = state.range(0);
     for (lob::OrderId id = 1; id <= num_orders; ++id) {
-        book.add_order(id, (id % 2 == 0) ? lob::Side::Buy : lob::Side::Sell,
-                      lob::OrderType::Limit, 100 + (id % 20), 10);
+        (void)book.add_order(id, (id % 2 == 0) ? lob::Side::Buy : lob::Side::Sell,
+                      100 + (id % 20), 10);
     }
     
     for (auto _ : state) {
@@ -66,22 +62,23 @@ static void BM_CancelOrder(benchmark::State& state) {
     const std::size_t num_orders = state.range(0);
     std::vector<lob::OrderId> ids;
     for (lob::OrderId id = 1; id <= num_orders; ++id) {
-        book.add_order(id, lob::Side::Buy, lob::OrderType::Limit, 100, 10);
+        (void)book.add_order(id, lob::Side::Buy, 100, 10);
         ids.push_back(id);
     }
     
-    std::random_device rd;
-    std::mt19937 gen(rd());
+    std::mt19937 gen(42);
     std::uniform_int_distribution<std::size_t> dist(0, ids.size() - 1);
     
     std::size_t idx = 0;
     for (auto _ : state) {
         if (idx >= ids.size()) {
+            state.PauseTiming();
             // Re-populate if we've cancelled everything
             for (lob::OrderId id = 1; id <= num_orders; ++id) {
-                book.add_order(id, lob::Side::Buy, lob::OrderType::Limit, 100, 10);
+                (void)book.add_order(id, lob::Side::Buy, 100, 10);
             }
             idx = 0;
+            state.ResumeTiming();
         }
         benchmark::DoNotOptimize(book.cancel_order(ids[idx++]));
     }
@@ -95,11 +92,10 @@ static void BM_ModifyOrder(benchmark::State& state) {
     // Pre-populate
     const std::size_t num_orders = state.range(0);
     for (lob::OrderId id = 1; id <= num_orders; ++id) {
-        book.add_order(id, lob::Side::Buy, lob::OrderType::Limit, 100, 10);
+        (void)book.add_order(id, lob::Side::Buy, 100, 10);
     }
     
-    std::random_device rd;
-    std::mt19937 gen(rd());
+    std::mt19937 gen(42);
     std::uniform_int_distribution<lob::Price> price_dist(95, 105);
     std::uniform_int_distribution<lob::Quantity> qty_dist(5, 15);
     
@@ -119,8 +115,7 @@ static void BM_GetLevels(benchmark::State& state) {
     
     // Pre-populate with many price levels
     for (lob::OrderId id = 1; id <= 1000; ++id) {
-        book.add_order(id, lob::Side::Buy, lob::OrderType::Limit, 
-                      100 + (id % 50), 10);
+        (void)book.add_order(id, lob::Side::Buy, 100 + (id % 50), 10);
     }
     
     for (auto _ : state) {
@@ -136,8 +131,7 @@ static void BM_DepthAtPrice(benchmark::State& state) {
     
     // Pre-populate
     for (lob::OrderId id = 1; id <= 1000; ++id) {
-        book.add_order(id, lob::Side::Buy, lob::OrderType::Limit, 
-                      100 + (id % 20), 10);
+        (void)book.add_order(id, lob::Side::Buy, 100 + (id % 20), 10);
     }
     
     for (auto _ : state) {

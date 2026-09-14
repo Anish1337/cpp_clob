@@ -5,8 +5,8 @@
 TEST_CASE("OrderBook - Add and retrieve orders", "[order_book]") {
     lob::OrderBook book;
     
-    REQUIRE(book.add_order(1, lob::Side::Buy, lob::OrderType::Limit, 100, 10));
-    REQUIRE(book.add_order(2, lob::Side::Sell, lob::OrderType::Limit, 101, 5));
+    REQUIRE(book.add_order(1, lob::Side::Buy, 100, 10));
+    REQUIRE(book.add_order(2, lob::Side::Sell, 101, 5));
     
     REQUIRE(book.order_count() == 2);
     
@@ -20,10 +20,10 @@ TEST_CASE("OrderBook - Add and retrieve orders", "[order_book]") {
 TEST_CASE("OrderBook - Best bid/ask", "[order_book]") {
     lob::OrderBook book;
     
-    book.add_order(1, lob::Side::Buy, lob::OrderType::Limit, 100, 10);
-    book.add_order(2, lob::Side::Buy, lob::OrderType::Limit, 99, 5);
-    book.add_order(3, lob::Side::Sell, lob::OrderType::Limit, 101, 10);
-    book.add_order(4, lob::Side::Sell, lob::OrderType::Limit, 102, 5);
+    (void)book.add_order(1, lob::Side::Buy, 100, 10);
+    (void)book.add_order(2, lob::Side::Buy, 99, 5);
+    (void)book.add_order(3, lob::Side::Sell, 101, 10);
+    (void)book.add_order(4, lob::Side::Sell, 102, 5);
     
     auto best_bid = book.best_bid();
     REQUIRE(best_bid.has_value());
@@ -37,8 +37,8 @@ TEST_CASE("OrderBook - Best bid/ask", "[order_book]") {
 TEST_CASE("OrderBook - Spread calculation", "[order_book]") {
     lob::OrderBook book;
     
-    book.add_order(1, lob::Side::Buy, lob::OrderType::Limit, 100, 10);
-    book.add_order(2, lob::Side::Sell, lob::OrderType::Limit, 101, 10);
+    (void)book.add_order(1, lob::Side::Buy, 100, 10);
+    (void)book.add_order(2, lob::Side::Sell, 101, 10);
     
     auto spread = book.spread();
     REQUIRE(spread.has_value());
@@ -48,7 +48,7 @@ TEST_CASE("OrderBook - Spread calculation", "[order_book]") {
 TEST_CASE("OrderBook - Cancel order", "[order_book]") {
     lob::OrderBook book;
     
-    book.add_order(1, lob::Side::Buy, lob::OrderType::Limit, 100, 10);
+    (void)book.add_order(1, lob::Side::Buy, 100, 10);
     REQUIRE(book.order_count() == 1);
     
     REQUIRE(book.cancel_order(1));
@@ -59,7 +59,7 @@ TEST_CASE("OrderBook - Cancel order", "[order_book]") {
 TEST_CASE("OrderBook - Modify order", "[order_book]") {
     lob::OrderBook book;
     
-    book.add_order(1, lob::Side::Buy, lob::OrderType::Limit, 100, 10);
+    (void)book.add_order(1, lob::Side::Buy, 100, 10);
     
     REQUIRE(book.modify_order(1, 105, 15));
     
@@ -77,9 +77,9 @@ TEST_CASE("OrderBook - Price-time priority", "[order_book]") {
     lob::OrderBook book;
     
     // Add multiple orders at same price
-    book.add_order(1, lob::Side::Buy, lob::OrderType::Limit, 100, 10);
-    book.add_order(2, lob::Side::Buy, lob::OrderType::Limit, 100, 5);
-    book.add_order(3, lob::Side::Buy, lob::OrderType::Limit, 100, 8);
+    (void)book.add_order(1, lob::Side::Buy, 100, 10);
+    (void)book.add_order(2, lob::Side::Buy, 100, 5);
+    (void)book.add_order(3, lob::Side::Buy, 100, 8);
     
     auto levels = book.get_levels(lob::Side::Buy, 1);
     REQUIRE(levels.size() == 1);
@@ -90,12 +90,31 @@ TEST_CASE("OrderBook - Price-time priority", "[order_book]") {
 TEST_CASE("OrderBook - Market depth", "[order_book]") {
     lob::OrderBook book;
     
-    book.add_order(1, lob::Side::Buy, lob::OrderType::Limit, 100, 10);
-    book.add_order(2, lob::Side::Buy, lob::OrderType::Limit, 100, 5);
-    book.add_order(3, lob::Side::Buy, lob::OrderType::Limit, 99, 8);
+    (void)book.add_order(1, lob::Side::Buy, 100, 10);
+    (void)book.add_order(2, lob::Side::Buy, 100, 5);
+    (void)book.add_order(3, lob::Side::Buy, 99, 8);
     
     REQUIRE(book.depth_at_price(lob::Side::Buy, 100) == 15);
     REQUIRE(book.depth_at_price(lob::Side::Buy, 99) == 8);
     REQUIRE(book.depth_at_price(lob::Side::Buy, 98) == 0);
 }
 
+
+#include <limits>
+TEST_CASE("Depth overflow is rejected without changing the book", "[order_book]") {
+    lob::OrderBook book;
+    const auto maximum = std::numeric_limits<lob::Quantity>::max();
+    REQUIRE(book.add_order(1, lob::Side::Buy, 100, maximum));
+    REQUIRE_FALSE(book.add_order(2, lob::Side::Buy, 100, 1));
+    REQUIRE(book.add_order(2, lob::Side::Buy, 99, 1));
+    REQUIRE_FALSE(book.modify_order(2, 100, 1));
+    REQUIRE(book.get_order(2)->price == 99);
+    REQUIRE(book.depth_at_price(lob::Side::Buy, 100) == maximum);
+}
+
+TEST_CASE("Spread avoids signed overflow", "[order_book]") {
+    lob::OrderBook book;
+    REQUIRE(book.add_order(1, lob::Side::Buy, std::numeric_limits<lob::Price>::min(), 1));
+    REQUIRE(book.add_order(2, lob::Side::Sell, std::numeric_limits<lob::Price>::max(), 1));
+    REQUIRE_FALSE(book.spread());
+}

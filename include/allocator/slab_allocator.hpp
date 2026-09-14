@@ -6,24 +6,28 @@
 #include <vector>
 #include <array>
 #include <new>
+#include <cstdlib>
+#include <stdexcept>
+#include <type_traits>
 
 namespace lob::allocator {
 
-// Custom slab allocator for zero-allocation order management
+// Single-threaded slab allocator with reusable order storage
 // Pre-allocates memory pools (slabs) and maintains a free list for reuse
 template<typename T>
 class SlabAllocator {
 public:
     static constexpr std::size_t DEFAULT_SLAB_SIZE = 1024;
-    static constexpr std::size_t ALIGNMENT = alignof(std::max_align_t);
+    static constexpr std::size_t ALIGNMENT = alignof(T) > alignof(std::max_align_t) ? alignof(T) : alignof(std::max_align_t);
     
     explicit SlabAllocator(std::size_t slab_size = DEFAULT_SLAB_SIZE)
         : slab_size_(slab_size)
         , free_list_(nullptr)
     {
+        if (slab_size_ < align_size(sizeof(T))) throw std::invalid_argument("Slab must fit at least one object");
         // Pre-allocate first slab for immediate use
         if (!allocate_slab()) {
-            std::terminate();  // Failed to allocate initial slab
+            throw std::bad_alloc();
         }
     }
     
@@ -33,11 +37,11 @@ public:
         }
     }
     
-    // Non-copyable, movable
+    // Stable ownership: slab pointers must not be shared by a defaulted move.
     SlabAllocator(const SlabAllocator&) = delete;
     SlabAllocator& operator=(const SlabAllocator&) = delete;
-    SlabAllocator(SlabAllocator&&) noexcept = default;
-    SlabAllocator& operator=(SlabAllocator&&) noexcept = default;
+    SlabAllocator(SlabAllocator&&) = delete;
+    SlabAllocator& operator=(SlabAllocator&&) = delete;
     
     // Allocate object from slab or free list (O(1) operation)
     [[nodiscard]] T* allocate() noexcept {
@@ -103,7 +107,7 @@ public:
         return {
             .total_slabs = slabs_.size(),
             .slab_size = slab_size_,
-            .objects_allocated = (slabs_.size() - 1) * slab_size_ / align_size(sizeof(T)) 
+            .objects_allocated = (slabs_.size() - 1) * (slab_size_ / align_size(sizeof(T)))
                                 + current_offset_ / align_size(sizeof(T)),
             .objects_in_free_list = free_count
         };
@@ -115,6 +119,9 @@ private:
         FreeNode* next_free;
     };
     
+    static_assert(std::is_nothrow_default_constructible_v<T>);
+    static_assert(std::is_trivially_destructible_v<T>, "Pool owns storage for trivial objects only");
+
     // Ensure type T is large enough to store FreeNode pointer
     static_assert(sizeof(T) >= sizeof(FreeNode), 
                   "Type T must be at least as large as FreeNode");
@@ -137,7 +144,8 @@ private:
             return false;
         }
         
-        slabs_.push_back(slab);
+        try { slabs_.push_back(slab); }
+        catch (...) { std::free(slab); return false; }
         current_slab_ = slab;
         current_slab_size_ = actual_slab_size;
         current_offset_ = 0;

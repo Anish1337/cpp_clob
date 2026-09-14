@@ -1,93 +1,45 @@
 #include <benchmark/benchmark.h>
 #include "matching_engine.hpp"
-#include <random>
-#include <vector>
 
+// Each timed submission consumes a fresh book. Setup and validation are excluded.
 static void BM_MatchLimitOrders(benchmark::State& state) {
     lob::MatchingEngine engine;
-    
-    // Pre-populate with resting orders
-    const std::size_t num_resting = state.range(0);
-    for (lob::OrderId id = 1; id <= num_resting; ++id) {
-        engine.submit_order(id, lob::Side::Sell, lob::OrderType::Limit, 
-                           100 + (id % 10), 10);
-    }
-    
-    lob::OrderId new_id = 10000;
+    const auto count = static_cast<lob::Quantity>(state.range(0));
     for (auto _ : state) {
-        benchmark::DoNotOptimize(
-            engine.submit_order(new_id++, lob::Side::Buy, lob::OrderType::Limit, 
-                               105, 5)
-        );
+        state.PauseTiming();
+        for (lob::OrderId id = 1; id <= count; ++id)
+            (void)engine.submit_order(id, lob::Side::Sell, 100 + id % 10, 1);
+        state.ResumeTiming();
+        auto result = engine.submit_order(count + 1, lob::Side::Buy, 109, count);
+        benchmark::DoNotOptimize(result);
+        state.PauseTiming();
+        const auto trades = engine.get_trades();
+        if (result != lob::OrderStatus::Filled || trades.size() != count || engine.get_order_book().order_count() != 0)
+            state.SkipWithError("Expected complete sweep of fresh liquidity");
+        state.ResumeTiming();
+        if (state.error_occurred()) break;
     }
-    state.SetItemsProcessed(state.iterations());
+    state.SetItemsProcessed(state.iterations() * count);
 }
-BENCHMARK(BM_MatchLimitOrders)->Arg(10)->Arg(100)->Arg(1000)->Unit(benchmark::kMicrosecond);
-
-static void BM_MatchMarketOrders(benchmark::State& state) {
-    lob::MatchingEngine engine;
-    
-    // Pre-populate with resting orders
-    const std::size_t num_resting = state.range(0);
-    for (lob::OrderId id = 1; id <= num_resting; ++id) {
-        engine.submit_order(id, lob::Side::Sell, lob::OrderType::Limit, 
-                           100 + (id % 10), 10);
-    }
-    
-    lob::OrderId new_id = 10000;
-    for (auto _ : state) {
-        benchmark::DoNotOptimize(
-            engine.submit_order(new_id++, lob::Side::Buy, lob::OrderType::Market, 
-                               0, 5)
-        );
-    }
-    state.SetItemsProcessed(state.iterations());
-}
-BENCHMARK(BM_MatchMarketOrders)->Arg(10)->Arg(100)->Arg(1000)->Unit(benchmark::kMicrosecond);
-
-static void BM_Throughput_MixedOrders(benchmark::State& state) {
-    lob::MatchingEngine engine;
-    
-    // Pre-populate book
-    for (lob::OrderId id = 1; id <= 500; ++id) {
-        engine.submit_order(id, (id % 2 == 0) ? lob::Side::Buy : lob::Side::Sell,
-                           lob::OrderType::Limit, 100 + (id % 20), 10);
-    }
-    
-    std::random_device rd;
-    std::mt19937 gen(rd());
-    std::uniform_int_distribution<int> side_dist(0, 1);
-    std::uniform_int_distribution<int> type_dist(0, 1);  // Only Limit (0) and Market (1), excluding IOC/FOK
-    std::uniform_int_distribution<lob::Price> price_dist(95, 105);
-    std::uniform_int_distribution<lob::Quantity> qty_dist(1, 20);
-    
-    lob::OrderId id = 10000;
-    for (auto _ : state) {
-        lob::Side side = (side_dist(gen) == 0) ? lob::Side::Buy : lob::Side::Sell;
-        lob::OrderType type = static_cast<lob::OrderType>(type_dist(gen));
-        benchmark::DoNotOptimize(
-            engine.submit_order(id++, side, type, price_dist(gen), qty_dist(gen))
-        );
-    }
-    state.SetItemsProcessed(state.iterations());
-}
-BENCHMARK(BM_Throughput_MixedOrders)->Unit(benchmark::kMicrosecond);
+BENCHMARK(BM_MatchLimitOrders)->Arg(10)->Arg(100)->Arg(1000);
 
 static void BM_PriceTimePriority(benchmark::State& state) {
     lob::MatchingEngine engine;
-    
-    // Create many orders at same price level to test FIFO
-    const std::size_t orders_per_level = state.range(0);
-    for (lob::OrderId id = 1; id <= orders_per_level; ++id) {
-        engine.submit_order(id, lob::Side::Sell, lob::OrderType::Limit, 100, 1);
-    }
-    
-    // Submit one large buy order that should match all
+    const auto count = static_cast<lob::Quantity>(state.range(0));
     for (auto _ : state) {
-        engine.submit_order(10000, lob::Side::Buy, lob::OrderType::Limit, 
-                           100, orders_per_level);
+        state.PauseTiming();
+        for (lob::OrderId id = 1; id <= count; ++id)
+            (void)engine.submit_order(id, lob::Side::Sell, 100, 1);
+        state.ResumeTiming();
+        benchmark::DoNotOptimize(engine.submit_order(count + 1, lob::Side::Buy, 100, count));
+        state.PauseTiming();
+        auto trades = engine.get_trades();
+        bool valid = trades.size() == count && engine.get_order_book().order_count() == 0;
+        for (std::size_t i = 0; i < trades.size(); ++i) valid = valid && trades[i].sell_order_id == i + 1;
+        if (!valid) state.SkipWithError("FIFO sweep failed");
+        state.ResumeTiming();
+        if (state.error_occurred()) break;
     }
-    state.SetItemsProcessed(state.iterations());
+    state.SetItemsProcessed(state.iterations() * count);
 }
-BENCHMARK(BM_PriceTimePriority)->Arg(10)->Arg(100)->Arg(1000)->Unit(benchmark::kMicrosecond);
-
+BENCHMARK(BM_PriceTimePriority)->Arg(10)->Arg(100)->Arg(1000);

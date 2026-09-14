@@ -7,7 +7,7 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Compiler flags
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
-    add_compile_options(-Wall -Wextra -Wpedantic -O3 -march=native)
+    add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
 # Include directories
@@ -24,11 +24,16 @@ set(SOURCES
 add_library(lob_cpp STATIC ${SOURCES})
 
 # Tests
-enable_testing()
-add_subdirectory(tests)
+include(CTest)
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
 
 # Benchmarks
-add_subdirectory(benchmarks)
+option(BUILD_BENCHMARKS "Build Google Benchmark executables" OFF)
+if(BUILD_BENCHMARKS)
+    add_subdirectory(benchmarks)
+endif()
 
 # Examples
 add_subdirectory(examples)

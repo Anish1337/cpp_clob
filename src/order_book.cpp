@@ -1,41 +1,37 @@
 #include "order_book.hpp"
 #include <chrono>
+#include <limits>
 #include <ranges>  // C++23: std::ranges::to
-#include <source_location>  // C++23: std::source_location
 
 namespace lob {
-
-OrderBook::OrderBook(TradeCallback trade_callback)
-    : trade_callback_(std::move(trade_callback))
-{
-}
 
 OrderBook::~OrderBook() {
     clear();
 }
 
-bool OrderBook::add_order(OrderId id, Side side, OrderType type, 
-                          Price price, Quantity quantity,
-                          std::source_location loc) {
-    // C++23: std::source_location provides compile-time file/line info for debugging
-    if (quantity == 0) {
+bool OrderBook::add_order(OrderId id, Side side,
+                          Price price, Quantity quantity) {
+    if (quantity == 0 || (side != Side::Buy && side != Side::Sell)) {
         return false;
     }
-    
+
     if (orders_.find(id) != orders_.end()) {
         return false;  // Order ID already exists
     }
-    
-    // Allocate order from custom slab allocator (zero-allocation after initial setup)
+
+    const auto* existing_level = get_price_level(side, price);
+    if (existing_level && quantity > std::numeric_limits<Quantity>::max() - existing_level->total_quantity)
+        return false;
+
+    // Reuse pooled order storage; growing the pool can allocate.
     Order* order = allocator_.allocate();
     if (!order) {
         return false;
     }
-    
+
     // Initialize order fields
     order->id = id;
     order->side = side;
-    order->type = type;
     order->price = price;
     order->quantity = quantity;
     order->filled_quantity = 0;
@@ -43,28 +39,23 @@ bool OrderBook::add_order(OrderId id, Side side, OrderType type,
     order->status = OrderStatus::New;
     order->next = nullptr;
     order->prev = nullptr;
-    
-    // Get or create price level (bids use descending order, asks use ascending)
-    PriceLevel* level = get_price_level(side, price);
-    if (!level) {
-        // Create new price level if it doesn't exist
-        // TODO: Consider extracting this into a helper function to reduce duplication
-        if (side == Side::Buy) {
-            auto [it, inserted] = bid_levels_.emplace(price, PriceLevel{});
-            level = &it->second;
-            level->price = price;
-        } else {
-            auto [it, inserted] = ask_levels_.emplace(price, PriceLevel{});
-            level = &it->second;
-            level->price = price;
+
+    PriceLevel* level = nullptr;
+    try {
+        if (side == Side::Buy) level = &bid_levels_.try_emplace(price).first->second;
+        else level = &ask_levels_.try_emplace(price).first->second;
+        level->price = price;
+        orders_.emplace(id, order);
+    } catch (...) {
+        if (level && level->empty()) {
+            if (side == Side::Buy) bid_levels_.erase(price);
+            else ask_levels_.erase(price);
         }
+        allocator_.deallocate(order);
+        throw;
     }
-    
-    // Add to price level's linked list (maintains FIFO order)
     add_order_to_level(order, *level);
-    // Track order for O(1) lookup by ID
-    orders_[id] = order;
-    
+
     return true;
 }
 
@@ -73,72 +64,55 @@ bool OrderBook::cancel_order(OrderId id) {
     if (it == orders_.end()) {
         return false;
     }
-    
+
     Order* order = it->second;
     if (order->is_filled()) {
         return false;
     }
-    
+
     remove_order_from_level(order);
     orders_.erase(it);
     allocator_.deallocate(order);
-    
+
     return true;
 }
 
 bool OrderBook::modify_order(OrderId id, Price new_price, Quantity new_quantity) {
-    if (new_quantity == 0) {
-        return false;
-    }
-    
     auto it = orders_.find(id);
-    if (it == orders_.end()) {
-        return false;
-    }
-    
+    if (it == orders_.end()) return false;
     Order* order = it->second;
-    if (order->is_filled()) {
-        return false;
-    }
-    
-    if (new_quantity < order->filled_quantity) {
-        return false;
-    }
-    
-    Side side = order->side;
-    OrderType type = order->type;
-    Quantity filled = order->filled_quantity;
-    
-    // If price hasn't changed and new quantity >= old quantity, just update quantity
-    if (order->price == new_price && new_quantity >= order->quantity) {
-        Quantity old_remaining = order->remaining();
+    if (new_quantity < order->filled_quantity) return false;
+    if (new_quantity == order->filled_quantity) return cancel_order(id);
+
+    const Quantity remaining = new_quantity - order->filled_quantity;
+    const Quantity old_remaining = order->remaining();
+    auto* target = get_price_level(order->side, new_price);
+    const Quantity existing = target ? target->total_quantity : 0;
+    const Quantity other = existing - (new_price == order->price ? old_remaining : 0);
+    if (remaining > std::numeric_limits<Quantity>::max() - other) return false;
+
+    // Same-price reductions retain priority. Increases and repricing lose it.
+    if (new_price == order->price && new_quantity <= order->quantity) {
         order->quantity = new_quantity;
-        PriceLevel* level = get_price_level(side, new_price);
-        if (level) {
-            level->update_quantity(order, old_remaining);
-        }
+        target->update_quantity(order, old_remaining);
         return true;
     }
-    
-    // Remove old order
-    remove_order_from_level(order);
-    orders_.erase(it);
-    allocator_.deallocate(order);
-    
-    // Add new order with remaining quantity
-    Quantity remaining = new_quantity - filled;
-    if (remaining > 0) {
-        if (!add_order(id, side, type, new_price, remaining)) {
-            return false;
-        }
-        // Restore filled quantity
-        auto new_it = orders_.find(id);
-        if (new_it != orders_.end()) {
-            new_it->second->filled_quantity = filled;
-        }
-        return true;
+    // Allocate the destination level before unlinking the order.
+    if (!target) {
+        if (order->side == Side::Buy) target = &bid_levels_.try_emplace(new_price).first->second;
+        else target = &ask_levels_.try_emplace(new_price).first->second;
+        target->price = new_price;
     }
-    
+    if (new_price == order->price) {
+        // Keep the level alive while moving its order to the tail.
+        target->remove_order(order);
+    } else {
+        remove_order_from_level(order);
+    }
+    order->price = new_price;
+    order->quantity = new_quantity;
+    order->timestamp = get_timestamp();
+    target->add_order(order);
     return true;
 }
 
@@ -159,12 +133,12 @@ std::optional<Price> OrderBook::best_ask() const noexcept {
 }
 
 std::optional<Price> OrderBook::spread() const noexcept {
-    // C++23: Use monadic operations for cleaner optional handling
-    return best_bid().and_then([this](Price bid) {
-        return best_ask().transform([bid](Price ask) {
-            return ask - bid;
-        });
-    });
+    const auto bid = best_bid(), ask = best_ask();
+    if (!bid || !ask) return std::nullopt;
+    // Signed tick prices are supported; their difference may not fit Price.
+    if ((*bid < 0 && *ask > std::numeric_limits<Price>::max() + *bid) ||
+        (*bid > 0 && *ask < std::numeric_limits<Price>::min() + *bid)) return std::nullopt;
+    return *ask - *bid;
 }
 
 Quantity OrderBook::depth_at_price(Side side, Price price) const noexcept {
@@ -179,7 +153,7 @@ std::vector<std::pair<Price, Quantity>> OrderBook::get_levels(Side side, std::si
     // Returns top N price levels (market depth)
     // C++23: Use std::ranges::to for cleaner range-to-container conversion
     namespace r = std::ranges;
-    
+
     if (side == Side::Buy) {
         // Bids: iterate from highest to lowest price
         return bid_levels_
@@ -228,11 +202,11 @@ void OrderBook::remove_order_from_level(Order* order) {
     if (!order) {
         return;
     }
-    
+
     PriceLevel* level = get_price_level(order->side, order->price);
     if (level) {
         level->remove_order(order);
-        
+
         // Remove empty price level
         if (level->empty()) {
             if (order->side == Side::Buy) {
@@ -248,7 +222,7 @@ void OrderBook::remove_filled_order(Order* order) {
     if (!order || !order->is_filled()) {
         return;
     }
-    
+
     remove_order_from_level(order);
     auto it = orders_.find(order->id);
     if (it != orders_.end()) {
@@ -261,7 +235,7 @@ void OrderBook::update_price_level_quantity_incremental(Order* order, Quantity o
     if (!order) {
         return;
     }
-    
+
     PriceLevel* level = get_price_level(order->side, order->price);
     if (level) {
         level->update_quantity(order, old_remaining);

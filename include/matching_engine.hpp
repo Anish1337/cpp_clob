@@ -1,47 +1,28 @@
 #pragma once
-
 #include "order_book.hpp"
-#include "types.hpp"
-#include <vector>
 #include <functional>
+#include <vector>
 
 namespace lob {
-
 class MatchingEngine {
 public:
     using TradeCallback = std::function<void(const Trade&)>;
-    
-    explicit MatchingEngine(TradeCallback trade_callback = nullptr);
-    
-    [[nodiscard]] OrderStatus submit_order(OrderId id, Side side, OrderType type,
-                                           Price price, Quantity quantity);
+    explicit MatchingEngine(TradeCallback callback = nullptr);
+    [[nodiscard]] OrderStatus submit_order(OrderId id, Side side, Price price, Quantity quantity);
     [[nodiscard]] bool cancel_order(OrderId id);
+    // new_quantity is the total quantity, including historical fills.
     [[nodiscard]] bool modify_order(OrderId id, Price new_price, Quantity new_quantity);
-    [[nodiscard]] const OrderBook& get_order_book() const noexcept {
-        return order_book_;
-    }
-    [[nodiscard]] OrderBook& get_order_book() noexcept {
-        return order_book_;
-    }
+    [[nodiscard]] const OrderBook& get_order_book() const noexcept { return order_book_; }
     [[nodiscard]] std::vector<Trade> get_trades() noexcept {
         std::vector<Trade> result;
         trades_.swap(result);
         return result;
     }
-    
 private:
-    void match_order(Order* order);
-    void match_limit_order(Order* order);
-    void match_market_order(Order* order);
-    void match_ioc_order(Order* order);
-    void match_fok_order(Order* order);
-    
-    void execute_trade(Order* buy_order, Order* sell_order, Price price, Quantity quantity);
-    
+    OrderStatus match_order(Order* order);
+    void notify_trades(std::size_t first);
     OrderBook order_book_;
     std::vector<Trade> trades_;
     TradeCallback trade_callback_;
 };
-
-} // namespace lob
-
+}

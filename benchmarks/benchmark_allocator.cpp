@@ -35,11 +35,13 @@ static void BM_DeallocateOrder(benchmark::State& state) {
     std::size_t idx = 0;
     for (auto _ : state) {
         if (idx >= orders.size()) {
+            state.PauseTiming();
             // Re-allocate if we've deallocated everything
             for (auto*& order : orders) {
                 order = allocator.allocate();
             }
             idx = 0;
+            state.ResumeTiming();
         }
         allocator.deallocate(orders[idx++]);
         benchmark::ClobberMemory();

@@ -17,12 +17,6 @@ enum class Side : std::uint8_t {
     Sell = 1
 };
 
-enum class OrderType : std::uint8_t {
-    Limit = 0,
-    Market = 1,
-    IOC = 2,  // Immediate or Cancel
-    FOK = 3   // Fill or Kill
-};
 
 enum class OrderStatus : std::uint8_t {
     New = 0,
@@ -35,7 +29,6 @@ enum class OrderStatus : std::uint8_t {
 struct Order {
     OrderId id;
     Side side;
-    OrderType type;
     Price price;
     Quantity quantity;
     Quantity filled_quantity{0};

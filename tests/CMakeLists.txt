@@ -15,7 +15,7 @@ add_executable(tests
     test_allocator.cpp
 )
 
-target_link_libraries(tests PRIVATE lob_cpp Catch2::Catch2)
+target_link_libraries(tests PRIVATE lob_cpp Catch2::Catch2WithMain)
 
 include(CTest)
 include(Catch)

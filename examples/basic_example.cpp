@@ -11,17 +11,17 @@ int main() {
     });
     
     std::println("1. Adding sell orders to the book:");
-    engine.submit_order(1, lob::Side::Sell, lob::OrderType::Limit, 100, 10);
-    engine.submit_order(2, lob::Side::Sell, lob::OrderType::Limit, 101, 5);
-    engine.submit_order(3, lob::Side::Sell, lob::OrderType::Limit, 102, 8);
+    (void)engine.submit_order(1, lob::Side::Sell, 100, 10);
+    (void)engine.submit_order(2, lob::Side::Sell, 101, 5);
+    (void)engine.submit_order(3, lob::Side::Sell, 102, 8);
     std::println("   Added 3 sell orders\n");
     
     std::println("2. Adding buy orders:");
-    auto status1 = engine.submit_order(10, lob::Side::Buy, lob::OrderType::Limit, 100, 5);
+    auto status1 = engine.submit_order(10, lob::Side::Buy, 100, 5);
     std::println("   Buy order 10: {}", 
                  status1 == lob::OrderStatus::Filled ? "FILLED" : "PARTIAL");
     
-    auto status2 = engine.submit_order(11, lob::Side::Buy, lob::OrderType::Limit, 101, 8);
+    auto status2 = engine.submit_order(11, lob::Side::Buy, 101, 8);
     std::println("   Buy order 11: {}", 
                  status2 == lob::OrderStatus::Filled ? "FILLED" : "PARTIAL");
     std::println("");
