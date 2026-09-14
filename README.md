@@ -189,3 +189,84 @@ The current scope is correct limit matching, cancellation, replacement, useful
 regression tests, and reproducible performance experiments. Visualization,
 protocol handling, and further optimizations can be added after measuring this
 baseline.
+
+## Linux perf profiling
+
+The project includes a deterministic profiling workload and a script for counter
+collection and sampled call stacks. Neither requires Catch2 or Google Benchmark.
+Install Linux `perf` separately if it is not already available.
+
+```bash
+# Five repeated measurements of CPU and cache/branch counters.
+bash scripts/profile.sh stat
+
+# Sample user-space CPU cycles and produce a text hotspot report.
+bash scripts/profile.sh record
+```
+
+Both commands build `build-perf/clob_profile` with `RelWithDebInfo` and frame
+pointers. They default to 200,000 batches of 100 resting orders, distributed
+across ten tick prices. Each batch submits one crossing order that fills all
+resting orders; buy and sell directions alternate. The workload drains trades,
+validates the empty book and trade count, and checks total executed quantity.
+It performs 20,200,000 submissions and 20,000,000 executions per default run.
+
+You can change the workload size:
+
+```bash
+bash scripts/profile.sh stat 100000 1000
+bash scripts/profile.sh record 100000 1000
+```
+
+Arguments are batches (1–1,000,000) and orders per batch (1–10,000). A batch with
+fewer than ten orders uses fewer price levels. IDs are reused only after the
+previous batch has completed. No callbacks are installed.
+
+Outputs are saved separately in `build-perf/profile/stat/` and
+`build-perf/profile/record/`. Each run saves workload output, machine/commit
+metadata, CMake configuration, compilation commands, a source archive, and a
+copy of the executable. Stat mode adds `stat.txt`; record mode adds `perf.data`
+and `report.txt`. Repeating the same mode overwrites that mode's previous output;
+copy its directory elsewhere if you want to retain a baseline.
+
+To explore the recorded call stacks interactively:
+
+```bash
+perf report -i build-perf/profile/record/perf.data
+```
+
+**Measurement scope:** these profiles include the entire process: insertion,
+matching, map/hash/pool operations, trade timestamps, trade storage/draining,
+validation, and startup/destruction. Google Benchmark's `PauseTiming()` does not
+pause perf counters. This separate executable makes that distinction explicit;
+its elapsed time is not isolated matching latency and contains no percentile
+latency measurement.
+
+Interpret the outputs as follows:
+
+- Cycles and instructions help compare CPU work for an identical workload.
+  Instructions divided by cycles gives aggregate IPC, not a standalone speed score.
+- Branch misses divided by branches estimates branch-miss rate.
+- Generic cache references/misses depend on the CPU's event mapping; do not label
+  them L1 misses or infer cache efficiency from one run.
+- Perf may multiplex hardware counters. Check their time-running percentages and
+  repeatability, especially before comparing small differences.
+- The text report uses `--no-children`, so percentages show sampled self overhead.
+  Use call stacks to investigate callers; samples alone do not prove that a
+  proposed change will improve performance.
+
+For an optimization experiment, keep workload, compiler flags, and machine fixed;
+archive the baseline, change one implementation detail, rerun correctness tests,
+and collect a new profile. Profiling instrumentation, frequency scaling, CPU
+migration, and other processes affect measurements. Longer runs and optional CPU
+affinity can improve repeatability. Sanitizer builds are for correctness checks,
+not performance comparisons.
+
+The script requests user-space events. Some environments restrict performance
+counters or do not expose the requested hardware events. If perf reports access
+denied or unsupported counters, that run is not a usable result; the script does
+not change kernel permissions or silently substitute different events.
+
+An [initial measured baseline](profiling/BASELINE.md) records the workload,
+machine, counters, and sampled hotspots. It identifies timestamp acquisition as
+an investigation target; no performance improvement is claimed yet.

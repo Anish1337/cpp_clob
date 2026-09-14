@@ -38,3 +38,14 @@ endif()
 # Examples
 add_subdirectory(examples)
 
+
+# Standalone workload for Linux perf; no benchmark/test dependency is needed.
+option(BUILD_PROFILING "Build deterministic profiling workload with frame pointers" OFF)
+if(BUILD_PROFILING)
+    add_executable(clob_profile profiling/matching_workload.cpp)
+    target_link_libraries(clob_profile PRIVATE lob_cpp)
+    if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
+        target_compile_options(lob_cpp PRIVATE -fno-omit-frame-pointer)
+        target_compile_options(clob_profile PRIVATE -fno-omit-frame-pointer)
+    endif()
+endif()

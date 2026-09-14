@@ -1,0 +1,15 @@
+# started on Mon Sep 14 20:43:27 2026
+
+
+ Performance counter stats for '/home/l1ch/github/cpp_clob/build-perf/profile/stat/clob_profile 200000 100' (5 runs):
+
+           2130.24 msec task-clock:u                                                            ( +-  0.53% )
+        9217531069      cycles:u                                                                ( +-  0.24% )  (83.30%)
+       25923188896      instructions:u                                                          ( +-  0.01% )  (83.29%)
+        5885608525      branches:u                                                              ( +-  0.01% )  (83.30%)
+          17155815      branch-misses:u                                                         ( +-  0.29% )  (83.36%)
+          13439477      cache-references:u                                                      ( +- 12.97% )  (83.44%)
+            186916      cache-misses:u                                                          ( +- 10.52% )  (83.30%)
+
+       2.131862310 +- 0.011534794 seconds time elapsed  ( +-  0.54% )
+
